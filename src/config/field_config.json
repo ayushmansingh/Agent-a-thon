@@ -1,0 +1,484 @@
+{
+  "_legend": {
+    "derived_vendor": "pull from vendor col + transform (IMPLEMENT FOR REAL in POC)",
+    "derived_vendor_optional": "derive if vendor sheet has the col, else blank (Issue 2)",
+    "derived_rule_stub": "LLM/heuristic -> hardcode in POC, real Sonnet call later",
+    "system_id": "inject from pasted ID at stageB/stageC",
+    "default": "fixed business-confirmed fallback",
+    "vendor_config": "vendor-wide toggle -> 'Vendor defaults' UI band",
+    "package_input": "per-package -> 'Per-package' UI band",
+    "blank": "ship empty (business-confirmed)",
+    "lookup": "resolve via reference table",
+    "ship_sample": "copy from uploaded sample row (untraced cols)"
+  },
+  "Product": {
+    "Product name": [
+      "derived_vendor",
+      "Package Name",
+      "strip (SIC)"
+    ],
+    "Type": [
+      "derived_rule_stub",
+      "desc",
+      "ACTIVITY/TRANSFER -> hardcode 'ACTIVITY'"
+    ],
+    "Sub-Type": [
+      "derived_rule_stub",
+      "desc",
+      "hardcode 'SIGHTSEEING'"
+    ],
+    "Description": [
+      "derived_vendor",
+      "**description of the activity",
+      "clean ws"
+    ],
+    "Short Desc": [
+      "derived_rule_stub",
+      "desc",
+      "hardcode first sentence"
+    ],
+    "TnC": [
+      "derived_vendor",
+      "**Terms & Conditions",
+      "passthrough"
+    ],
+    "FAQs": [
+      "blank"
+    ],
+    "Activity Highlights": [
+      "derived_vendor",
+      "Why should I do this ?",
+      "bullet -> ~"
+    ],
+    "Product Affiliate": [
+      "default",
+      "Holidays"
+    ],
+    "Visibility Bit": [
+      "vendor_config",
+      "enum: Holidays|FD"
+    ],
+    "Channel": [
+      "vendor_config",
+      "enum: Assist|Online|Both"
+    ],
+    "Is Highlighted": [
+      "package_input",
+      "bool"
+    ],
+    "Highlighted Priority": [
+      "package_input",
+      "int (higher=more visible)"
+    ],
+    "Is hotel-linked activity": [
+      "package_input",
+      "bool"
+    ],
+    "Attach hotel ID": [
+      "package_input",
+      "MMT Hotel ID"
+    ],
+    "How To Redeem": [
+      "blank"
+    ],
+    "Min Booking Amount": [
+      "blank"
+    ],
+    "Sub-Category": [
+      "derived_rule_stub",
+      "desc",
+      "hardcode 'City Tour'"
+    ],
+    "Essence": [
+      "blank"
+    ],
+    "Amenities": [
+      "blank"
+    ],
+    "Persuasions": [
+      "blank"
+    ],
+    "Labels": [
+      "package_input",
+      "free text, varies per package"
+    ],
+    "Seo Enabled": [
+      "vendor_config",
+      "bool"
+    ],
+    "Market Brand": [
+      "blank"
+    ],
+    "Rank": [
+      "package_input",
+      "int"
+    ],
+    "Review Count": [
+      "blank"
+    ],
+    "Star Rating": [
+      "default",
+      "5"
+    ],
+    "Safety Measures": [
+      "blank"
+    ],
+    "Important info": [
+      "blank"
+    ],
+    "Things To Carry": [
+      "blank"
+    ],
+    "Additional Info": [
+      "blank"
+    ],
+    "Metaname": [
+      "package_input",
+      "short SEO name, derived-by-rule later"
+    ],
+    "City Code": [
+      "lookup",
+      "city_master (destination Name -> code)"
+    ],
+    "Lat": [
+      "blank"
+    ],
+    "Lon": [
+      "blank"
+    ],
+    "Address": [
+      "blank"
+    ],
+    "UPC": [
+      "blank"
+    ],
+    "Link of Image": [
+      "package_input",
+      "image path"
+    ],
+    "Image Description": [
+      "blank"
+    ],
+    "Rank of image": [
+      "default",
+      "0"
+    ],
+    "Link of Video": [
+      "blank"
+    ],
+    "Video Description": [
+      "blank"
+    ],
+    "Rank of Video": [
+      "default",
+      "0"
+    ]
+  },
+  "Rateplan": {
+    "Product ID": [
+      "system_id",
+      "stageB"
+    ],
+    "Rateplan name": [
+      "derived_vendor",
+      "Package Name",
+      "strip (SIC), append transfer suffix"
+    ],
+    "Rateplan description": [
+      "derived_vendor",
+      "**description of the activity",
+      "clean"
+    ],
+    "Validity Start Date": [
+      "package_input",
+      "date (no rule given - FLAG)"
+    ],
+    "Validity End Date": [
+      "package_input",
+      "date (sample 2040 - FLAG)"
+    ],
+    "Currency code": [
+      "derived_vendor",
+      "**currency",
+      "validate vs dict"
+    ],
+    "Unit Type": [
+      "derived_rule_stub",
+      "**Unit Type",
+      "'Adult & Child'->per_person"
+    ],
+    "Is dynamic inventory": [
+      "vendor_config",
+      "bool"
+    ],
+    "Is Freehold": [
+      "vendor_config",
+      "bool"
+    ],
+    "Min Pax": [
+      "derived_vendor",
+      "**min PaxCount",
+      "int"
+    ],
+    "Max Pax": [
+      "derived_vendor",
+      "**max PaxCount",
+      "int"
+    ],
+    "Rateplan Affiliate": [
+      "default",
+      "Holidays"
+    ],
+    "Same ITR vendor": [
+      "vendor_config",
+      "bool"
+    ],
+    "Activity transfer type": [
+      "vendor_config",
+      "0|1"
+    ],
+    "Is ticket linked to sightseeing": [
+      "vendor_config",
+      "bool"
+    ],
+    "Sightseeing ID for ticket": [
+      "blank"
+    ],
+    "Valid Days Of Week": [
+      "derived_rule_stub",
+      "**List of unavailable days",
+      "7 days minus unavailable"
+    ],
+    "Blackout Date Start": [
+      "derived_vendor",
+      "**List of unavailable dates",
+      "parse; nil->blank"
+    ],
+    "Blackout Date End": [
+      "derived_vendor",
+      "**List of unavailable dates",
+      "parse; nil->blank"
+    ],
+    "Commission Type": [
+      "default",
+      "PERCENTAGE"
+    ],
+    "Commission Value": [
+      "default",
+      "0"
+    ],
+    "Convenience Fee Type": [
+      "default",
+      "PERCENTAGE"
+    ],
+    "Convenience Fee Value": [
+      "default",
+      "0"
+    ],
+    "Suitable for": [
+      "derived_rule_stub",
+      "**Unit Type",
+      "expand pax types"
+    ],
+    "Is Slot Available": [
+      "default",
+      "TRUE"
+    ],
+    "Is zone applicable": [
+      "default",
+      "FALSE"
+    ],
+    "Inclusions": [
+      "derived_vendor",
+      "**inclusion",
+      "bullet -> ~"
+    ],
+    "Exclusions": [
+      "derived_vendor",
+      "**exclusion",
+      "bullet -> ~"
+    ],
+    "Generate PNR": [
+      "default",
+      "pnr_auto_generated"
+    ],
+    "MRP": [
+      "default",
+      "0"
+    ],
+    "Voucher Multiplier": [
+      "default",
+      "0"
+    ],
+    "Vendor Rateplan Code": [
+      "blank"
+    ],
+    "Form Data Req": [
+      "blank"
+    ],
+    "Rateplan Label": [
+      "blank"
+    ],
+    "Duration(in minutes)": [
+      "derived_vendor",
+      "**Duration of the Activity (in minutes)",
+      "passthrough (FLAG 120 vs 180)"
+    ],
+    "Points of interest - Name": [
+      "blank"
+    ],
+    "Is meal included": [
+      "derived_rule_stub",
+      "**inclusion",
+      "default FALSE"
+    ],
+    "Type of meal": [
+      "blank"
+    ],
+    "Menu": [
+      "blank"
+    ],
+    "Variety of meal": [
+      "blank"
+    ],
+    "Sellable units": [
+      "default",
+      "1"
+    ],
+    "Time of day": [
+      "derived_rule_stub",
+      "**schedule",
+      "MORNING/EVENING/ANYTIME"
+    ],
+    "Schedule start time": [
+      "derived_vendor",
+      "**schedule",
+      "parse first start"
+    ],
+    "Schedule end time": [
+      "derived_vendor",
+      "**schedule",
+      "parse last end"
+    ],
+    "Is pickup included": [
+      "derived_rule_stub",
+      "**pickup Point",
+      "TRUE if present"
+    ],
+    "Pickup timings": [
+      "derived_vendor",
+      "**Slot Time",
+      "parse"
+    ],
+    "Is dropoff included": [
+      "derived_rule_stub",
+      "**pickup Point",
+      "TRUE"
+    ],
+    "Drop off timings": [
+      "derived_vendor_optional",
+      "(absent this vendor) -> blank"
+    ],
+    "Type of vehicle": [
+      "derived_vendor_optional",
+      "(absent this vendor) -> blank"
+    ],
+    "Private/ Shared": [
+      "derived_rule_stub",
+      "Package Name",
+      "(SIC)->SHARED"
+    ],
+    "__UNTRACED_55_COLS__": [
+      "ship_sample",
+      "copy verbatim from uploaded Rateplan sample row 2/3 until trace completed"
+    ]
+  },
+  "Price": {
+    "Product ID": [
+      "system_id",
+      "stageB"
+    ],
+    "Rateplan ID": [
+      "system_id",
+      "stageC"
+    ],
+    "Affiliates": [
+      "default",
+      "Holidays"
+    ],
+    "Price type": [
+      "default",
+      "B2B"
+    ],
+    "Slot Time Ranges": [
+      "derived_vendor",
+      "**schedule / **Slot Time",
+      "'-'->'~', ' / '->'|'"
+    ],
+    "Start Date (Slot Wise)": [
+      "package_input",
+      "date (validity)"
+    ],
+    "End Date (Slot Wise)": [
+      "package_input",
+      "date (validity)"
+    ],
+    "Run On Days": [
+      "derived_rule_stub",
+      "**List of unavailable days",
+      "7 minus unavailable"
+    ],
+    "Pickup type": [
+      "blank"
+    ],
+    "Pickup point": [
+      "blank"
+    ],
+    "Dropoff type": [
+      "blank"
+    ],
+    "Dropoff point": [
+      "blank"
+    ],
+    "Min pax": [
+      "derived_vendor",
+      "**min PaxCount",
+      "int"
+    ],
+    "Max pax": [
+      "derived_vendor",
+      "**max PaxCount",
+      "int"
+    ],
+    "Salience": [
+      "package_input",
+      "int"
+    ],
+    "Group unit Price": [
+      "default",
+      "0"
+    ],
+    "Adult price": [
+      "derived_vendor",
+      "Adult",
+      "COST in vendor currency (MYR). FX/GST downstream"
+    ],
+    "Child price": [
+      "derived_vendor",
+      "Child",
+      "COST in vendor currency"
+    ],
+    "Senior price": [
+      "default",
+      "0"
+    ],
+    "Youth price": [
+      "default",
+      "0"
+    ],
+    "Infant price": [
+      "default",
+      "0"
+    ]
+  }
+}
