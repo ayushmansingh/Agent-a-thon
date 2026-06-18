@@ -1,15 +1,19 @@
 // =============================================================================
 // EXTRACTOR — single swappable module.
 //
-//   extract(vendorRows) -> { product, rateplan, price }
+//   extract(vendorRows, classifications?) -> { product, rateplan, price }
 //
-// In the POC this is a STUB for the LLM-classification fields only. The
-// deterministic transforms (separator swaps, lat/long parse, day math,
-// passthrough/clean) are REAL — see ./transforms.js.
+// Two layers, merged per row:
+//   1. Deterministic transforms (separator swaps, lat/long parse, day math,
+//      passthrough/clean) — REAL, see ./transforms.js.
+//   2. LLM-classification fields (Type, Sub-Type, Sub-Category, Short Desc,
+//      meal/private-shared/time-of-day/suitable-for/unit-type) — inferred by
+//      Claude in ./llmExtractor.js. Pass the per-row `classifications` array and
+//      each field overlays the deterministic stub default.
 //
-// To go live: replace `extract` with a single API call to the real Sonnet
-// extractor. The return shape (per-sheet arrays of { configKey: value }) must
-// stay the same and the UI will not need to change.
+// `classifications` is optional: omit it (or pass []) and every classification
+// field falls back to its hardcoded stub, so the deterministic path still works
+// offline / without an API key.
 // =============================================================================
 
 import {
@@ -32,7 +36,7 @@ import {
 import { lookupCityCode } from "../config/cityMaster.js";
 
 // Resolve a vendor cell by header name (exact, else normalized contains).
-function makeVendorGetter(row) {
+export function makeVendorGetter(row) {
   const keys = Object.keys(row);
   const norm = (s) =>
     String(s)
@@ -53,24 +57,28 @@ function makeVendorGetter(row) {
   };
 }
 
+// Use the LLM value when present and non-empty, else the deterministic stub.
+const pick = (llmVal, stub) =>
+  llmVal != null && String(llmVal).trim() !== "" ? llmVal : stub;
+
 // ---- PRODUCT -----------------------------------------------------------------
-function deriveProduct(row) {
+function deriveProduct(row, cls = {}) {
   const g = makeVendorGetter(row);
   return {
     "Product name": stripSIC(g("Package Name")),
-    Type: "ACTIVITY", // hardcoded (LLM class)
-    "Sub-Type": "SIGHTSEEING", // hardcoded (LLM class)
+    Type: pick(cls.type, "ACTIVITY"), // LLM class (stub: ACTIVITY)
+    "Sub-Type": pick(cls.subType, "SIGHTSEEING"), // LLM class (stub: SIGHTSEEING)
     Description: cleanWs(g("**description of the activity")),
-    "Short Desc": firstSentence(g("**description of the activity")), // rule stub
+    "Short Desc": pick(cls.shortDesc, firstSentence(g("**description of the activity"))), // LLM (stub: first sentence)
     TnC: passthrough(g("**Terms & Conditions")),
     "Activity Highlights": bulletToTilde(g("Why should I do this ?")),
-    "Sub-Category": "City Tour", // hardcoded (LLM class)
+    "Sub-Category": pick(cls.subCategory, "City Tour"), // LLM class (stub: City Tour)
     "City Code": lookupCityCode(g("destination Name")), // lookup
   };
 }
 
 // ---- RATEPLAN ----------------------------------------------------------------
-function deriveRateplan(row) {
+function deriveRateplan(row, cls = {}) {
   const g = makeVendorGetter(row);
   const pkg = g("Package Name");
   const schedule = g("**schedule");
@@ -79,37 +87,37 @@ function deriveRateplan(row) {
     "Rateplan name": `${stripSIC(pkg)} - Shared Transfers`,
     "Rateplan description": cleanWs(g("**description of the activity")),
     "Currency code": passthrough(g("**currency")).toUpperCase(),
-    "Unit Type": unitTypeToCms(g("**Unit Type")), // rule stub
+    "Unit Type": pick(cls.unitType, unitTypeToCms(g("**Unit Type"))), // LLM (stub: per_person)
     "Min Pax": toInt(g("**min PaxCount")),
     "Max Pax": toInt(g("**max PaxCount")),
-    "Valid Days Of Week": daysMinusUnavailable(g("**List of unavailable days")),
+    "Valid Days Of Week": pick(cls.validDays, daysMinusUnavailable(g("**List of unavailable days"))), // LLM (stub: 7 days minus unavailable)
     "Blackout Date Start": parseBlackout(g("**List of unavailable dates")),
     "Blackout Date End": parseBlackout(g("**List of unavailable dates")),
-    "Suitable for": expandPaxTypes(g("**Unit Type")), // rule stub
+    "Suitable for": pick(cls.suitableFor, expandPaxTypes(g("**Unit Type"))), // LLM (stub: pax-type split)
     Inclusions: bulletToTilde(g("**inclusion")),
     Exclusions: bulletToTilde(g("**exclusion")),
     "Duration(in minutes)": passthrough(g("**Duration of the Activity (in minutes)")), // FLAG
-    "Is meal included": "FALSE", // rule stub default
-    "Time of day": timeOfDay(schedule), // rule stub
+    "Is meal included": pick(cls.isMealIncluded, "FALSE"), // LLM reads inclusions (stub: FALSE)
+    "Time of day": pick(cls.timeOfDay, timeOfDay(schedule)), // LLM (stub: from schedule hour)
     "Schedule start time": scheduleStart(schedule),
     "Schedule end time": scheduleEnd(schedule),
-    "Is pickup included": pickupPoint && String(pickupPoint).trim() ? "TRUE" : "FALSE", // rule stub
+    "Is pickup included": pick(cls.isPickupIncluded, pickupPoint && String(pickupPoint).trim() ? "TRUE" : "FALSE"), // LLM (stub: TRUE if pickup present)
     "Pickup timings": "", // vendor "**Slot Time" present but blank in sample row
-    "Is dropoff included": "TRUE", // rule stub
+    "Is dropoff included": pick(cls.isDropoffIncluded, "TRUE"), // LLM (stub: TRUE)
     "Drop off timings": "", // derived_vendor_optional — absent this vendor
     "Type of vehicle": "", // derived_vendor_optional — absent this vendor
-    "Private/ Shared": /\(\s*SIC\s*\)/i.test(String(pkg)) ? "SHARED" : "PRIVATE", // rule stub
+    "Private/ Shared": pick(cls.privateOrShared, /\(\s*SIC\s*\)/i.test(String(pkg)) ? "SHARED" : "PRIVATE"), // LLM (stub: SIC regex)
     "Sightseeing ID for ticket": "",
   };
 }
 
 // ---- PRICE -------------------------------------------------------------------
-function derivePrice(row) {
+function derivePrice(row, cls = {}) {
   const g = makeVendorGetter(row);
   const schedule = g("**schedule");
   return {
     "Slot Time Ranges": slotTimeRanges(schedule),
-    "Run On Days": daysMinusUnavailable(g("**List of unavailable days")),
+    "Run On Days": pick(cls.validDays, daysMinusUnavailable(g("**List of unavailable days"))), // LLM (stub: 7 minus unavailable)
     "Min pax": toInt(g("**min PaxCount")),
     "Max pax": toInt(g("**max PaxCount")),
     "Adult price": toNumber(g("Adult")), // COST in vendor currency (MYR)
@@ -117,12 +125,13 @@ function derivePrice(row) {
   };
 }
 
-export function extract(vendorRows) {
+export function extract(vendorRows, classifications = []) {
   const rows = Array.isArray(vendorRows) ? vendorRows : [];
+  const cls = Array.isArray(classifications) ? classifications : [];
   return {
-    product: rows.map(deriveProduct),
-    rateplan: rows.map(deriveRateplan),
-    price: rows.map(derivePrice),
+    product: rows.map((r, i) => deriveProduct(r, cls[i] || {})),
+    rateplan: rows.map((r, i) => deriveRateplan(r, cls[i] || {})),
+    price: rows.map((r, i) => derivePrice(r, cls[i] || {})),
   };
 }
 

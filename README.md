@@ -13,9 +13,28 @@ site (Vercel).
 
 ```bash
 npm install
+cp .env.example .env.local   # then paste your Anthropic key (see "AI extraction")
 npm run dev      # http://localhost:5173
 npm run build    # static build into dist/
 ```
+
+## AI extraction (Claude)
+
+The classification fields are inferred by **Claude (Sonnet 4.6)** via the official
+`@anthropic-ai/sdk`, called **directly from the browser** (the app stays a static
+site — no backend). Provide a key one of two ways:
+
+- **Env var** — put `VITE_ANTHROPIC_API_KEY=sk-ant-...` in `.env.local`
+  (git-ignored via `*.local`), or
+- **In-app** — paste a key into the field on the page (kept in memory only).
+
+On upload the app shows the deterministic output instantly, then one batched
+Claude call classifies every activity and the fields update in place. With **no
+key**, it falls back to the deterministic stub defaults — nothing breaks.
+
+> ⚠️ Because the call is browser-direct (`dangerouslyAllowBrowser`), the key is
+> visible to anyone using the page. Fine for a local demo with your own key —
+> for a public deploy, move the call behind a serverless proxy and drop the flag.
 
 ## The flow — IDs are the baton
 
@@ -37,24 +56,30 @@ Each section has two editable bands:
 - **Per-package** (`package_input`) — differs per activity (Rank, Highlighted,
   Salience, hotel link, Labels, validity dates, image link…).
 
-## The extractor is one swappable module
+## The extractor — two layers, merged per row
 
 ```js
-extract(vendorRows) -> { product: [...], rateplan: [...], price: [...] }
+classifyActivities(vendorRows, { apiKey }) -> { classifications: [...] }   // Claude
+extract(vendorRows, classifications?)       -> { product, rateplan, price } // merge
 ```
 
-Lives in [`src/lib/extractor.js`](src/lib/extractor.js). In this POC:
+- **Deterministic transforms are REAL** ([`src/lib/transforms.js`](src/lib/transforms.js)):
+  separator swaps (`•`/`-` → `~`, `/` → `|`), lat/long parsing (`3.1390° N` →
+  `3.1390`), `(SIC)` stripping, whitespace cleaning, day-of-week math, schedule
+  parsing, pax/int/number coercion, passthrough.
+- **All 13 `derived_rule_stub` fields are inferred by Claude**
+  ([`src/lib/llmExtractor.js`](src/lib/llmExtractor.js)): Type, Sub-Type,
+  Sub-Category, Short Desc, Unit Type, Suitable-for, Is-meal-included, Time of
+  day, Private/Shared, Valid Days Of Week, Run On Days, Is-pickup-included, and
+  Is-dropoff-included — one batched Sonnet 4.6 call with a JSON-schema structured
+  output, read from each activity's description / inclusions / schedule /
+  unavailable-days.
 
-- **Deterministic transforms are REAL** (`src/lib/transforms.js`): separator
-  swaps (`•`/`-` → `~`, `/` → `|`), lat/long parsing (`3.1390° N` → `3.1390`),
-  `(SIC)` stripping, whitespace cleaning, day-of-week math, schedule parsing,
-  pax/int/number coercion, passthrough.
-- **LLM-classification fields are hardcoded stubs** (Type → `ACTIVITY`,
-  Sub-Type → `SIGHTSEEING`, Sub-Category → `City Tour`, Short Desc → first
-  sentence, Time of day → from schedule, etc.).
-
-To go live, replace the body of `extract()` with a single API call to the real
-extractor. The return shape and the UI stay exactly the same.
+[`extract()`](src/lib/extractor.js) overlays each Claude value onto the
+deterministic output (`pick(llmVal, stub)`); pass `[]` (or omit it) and every
+classification field falls back to its stub default, so the deterministic path
+still works with no API key. To run the classifier elsewhere (a serverless
+proxy), swap `llmExtractor.js` — `extract()` and the UI stay the same.
 
 ## Field handling
 
