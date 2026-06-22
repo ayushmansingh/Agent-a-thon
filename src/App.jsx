@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import { extract, computeFlags } from "./lib/extractor.js";
+import { classifyActivities, getEnvApiKey } from "./lib/llmExtractor.js";
 import {
   loadAllTemplates,
   parseVendorFile,
@@ -183,6 +184,12 @@ export default function App() {
   const [flags, setFlags] = useState([]);
   const [fileName, setFileName] = useState("");
 
+  // LLM classification
+  const envKeyPresent = Boolean(getEnvApiKey());
+  const [apiKey, setApiKey] = useState("");
+  const [llmStatus, setLlmStatus] = useState("idle"); // idle|running|done|error|no-key
+  const [llmError, setLlmError] = useState("");
+
   const [vendorConfig, setVendorConfig] = useState({});
   const [packageInputs, setPackageInputs] = useState({
     Product: [],
@@ -219,8 +226,8 @@ export default function App() {
     setFileName(file.name);
     const rows = await parseVendorFile(file);
     setVendorRows(rows);
-    const ex = extract(rows);
-    setExtracted(ex);
+    // Instant deterministic output (classification fields use stub defaults)…
+    setExtracted(extract(rows));
     setFlags(computeFlags(rows));
 
     setVendorConfig({
@@ -238,6 +245,27 @@ export default function App() {
     setRateplanIds(rows.map(() => ""));
     setProductDownloaded(false);
     setRateplanDownloaded(false);
+
+    // …then enhance with Claude classifications (overlays the stubs).
+    runClassification(rows);
+  }
+
+  async function runClassification(rows) {
+    if (!rows || !rows.length) return;
+    setLlmStatus("running");
+    setLlmError("");
+    const { classifications, error } = await classifyActivities(rows, { apiKey });
+    if (error === "no-key") {
+      setLlmStatus("no-key");
+      return;
+    }
+    if (error) {
+      setLlmStatus("error");
+      setLlmError(error);
+      return; // keep the deterministic output already on screen
+    }
+    setExtracted(extract(rows, classifications));
+    setLlmStatus("done");
   }
 
   function extractedFor(sheetName) {
@@ -328,7 +356,7 @@ export default function App() {
             the next.
           </p>
         </div>
-        <div className="badge">POC · in-browser · stub extractor</div>
+        <div className="badge">POC · in-browser · Claude Sonnet 4.6</div>
       </header>
 
       {templateError && (
@@ -349,11 +377,76 @@ export default function App() {
         )}
       </div>
 
+      {/* AI classification status + key control */}
+      <div className="ai-band">
+        <div className="ai-status">
+          {llmStatus === "running" && (
+            <span className="ai-running">
+              🧠 Claude (Sonnet 4.6) is classifying {vendorRows.length} activit
+              {vendorRows.length === 1 ? "y" : "ies"}…
+            </span>
+          )}
+          {llmStatus === "done" && (
+            <span className="ai-done">
+              ✓ AI classification applied — all 13 rule-stub fields (Type,
+              Sub-Type, Sub-Category, Short Desc, Unit Type, Suitable-for, meal,
+              time-of-day, private/shared, valid-days, run-on-days, pickup &amp;
+              dropoff) were inferred from each activity.
+            </span>
+          )}
+          {llmStatus === "no-key" && (
+            <span className="ai-warn">
+              ⚠ No Anthropic API key — showing deterministic output with stub
+              classifications. Set <code>VITE_ANTHROPIC_API_KEY</code> in{" "}
+              <code>.env.local</code> or paste a key below, then re-run.
+            </span>
+          )}
+          {llmStatus === "error" && (
+            <span className="ai-warn">
+              ⚠ AI classification failed ({llmError}). Showing deterministic
+              output with stub classifications.
+            </span>
+          )}
+          {llmStatus === "idle" && (
+            <span className="ai-idle">
+              {envKeyPresent
+                ? "Claude Sonnet 4.6 is configured — upload a tariff to classify."
+                : "No env key detected — paste an Anthropic key below to enable AI classification (or run deterministic-only)."}
+            </span>
+          )}
+        </div>
+        {!envKeyPresent && (
+          <div className="ai-key">
+            <input
+              type="password"
+              value={apiKey}
+              placeholder="sk-ant-… (kept in memory only)"
+              onChange={(e) => setApiKey(e.target.value)}
+            />
+            {vendorRows.length > 0 && (
+              <button
+                className="secondary"
+                disabled={llmStatus === "running"}
+                onClick={() => runClassification(vendorRows)}
+              >
+                {llmStatus === "running" ? "Classifying…" : "Run AI classification"}
+              </button>
+            )}
+          </div>
+        )}
+        {envKeyPresent && vendorRows.length > 0 && llmStatus !== "running" && (
+          <button className="secondary" onClick={() => runClassification(vendorRows)}>
+            Re-run AI classification
+          </button>
+        )}
+      </div>
+
       {!extracted && (
         <div className="empty">
           Upload a vendor tariff sheet to auto-fill the three CMS sheets. The
-          deterministic transforms run for real; LLM-classification fields are
-          stubbed.
+          deterministic transforms run for real; the classification fields are
+          inferred per-activity by Claude (with a deterministic stub fallback if
+          no key is set).
         </div>
       )}
 
