@@ -20,17 +20,80 @@ import { makeVendorGetter } from "./extractor.js";
 
 const MODEL = "claude-sonnet-4-6";
 
-// Controlled vocabularies — SEEDED FROM THE PRODUCT SAMPLE SHEET (5 rows).
-// The model free-styled plausible-but-nonconforming tokens (e.g. Type "TOUR"
-// instead of "ACTIVITY") until these were enum-constrained. The sample is a
-// small slice, so these lists are almost certainly incomplete.
-// TODO: replace with the full canonical CMS allowed-value lists.
-const TYPE_VALUES = ["ACTIVITY", "TRANSFER"]; // sample had only ACTIVITY; TRANSFER per field_config note
-const SUBTYPE_VALUES = ["SIGHTSEEING", "ATTRACTIONS"];
-const SUBCATEGORY_VALUES = ["City Tour", "Half Day Tours", "Sightseeing Packages"];
-const UNIT_TYPE_VALUES = ["per_person", "per_group", "per_vehicle", "per_unit"];
+// ---------------------------------------------------------------------------
+// Controlled vocabularies — sourced from the CMS Dictionary sheets
+// (Product_2.xlsx / Rateplan_1_1.xlsx Dictionary tab, all rows).
+// ---------------------------------------------------------------------------
 
+const TYPE_VALUES = [
+  "ACTIVITY", "MEALS", "OTHERS", "PACKAGE_ADDON", "TRANSFER",
+];
+
+// Valid Sub-Type values when Type = ACTIVITY (SubType_ACTIVITY column).
+const SUBTYPE_ACTIVITY_VALUES = ["ATTRACTIONS", "SIGHTSEEING", "TICKET_ONLY"];
+
+// Full Sub-Category list from the Dictionary SubCategory Name column.
+const SUBCATEGORY_VALUES = [
+  "3D Show","4WD Tours","4WD, ATV & Off-Road Tours","Adrenaline & Extreme",
+  "Adults-only Shows","Adventure","Afternoon Teas","Air Activities","Air Tours",
+  "Air Transfers","Airport & Ground Transfers","Airport Lounges","Airport Services",
+  "Airport Transfers","Airport to Hotel","Archaeology","Archaeology Tours",
+  "Arts & Culture","Attraction Tickets","Attractions","Audio Guide Tour",
+  "Balloon Rides","Bar","Bar, Club & Pub Tours","Beauty/Spa/Massage",
+  "Beer & Brewery Tours","Bike & Mountain Bike Tours","Bird Watching","Boat Rental",
+  "Boat Rides","Bungee Jumping","Bus & Minivan Tours","Bus Services","Cabaret",
+  "Cable Car","Camping & Motor-homes","City Sightseeing","City Tour","City Tours",
+  "Coffee & Tea Tours","Comedy","Concerts & Special Events","Cooking",
+  "Cooking Classes","Cruise & Meal","Cruises","Cruises, Sailing & Water Tours",
+  "Cruising","Culinary","Cultural & Theme Tours","Cultural Experiences",
+  "Cultural Tours","Custom Private Tours","Cycling","Cycling Tours","Day Cruises",
+  "Day Trips","Dining Experiences","Dinner Packages","Dinner Theater",
+  "Dolphin & Whale Watching","Duck Tours","Eco Tours","Eco-Tours",
+  "Entertainment Packages","Evening Tour","Events","Events & Shows",
+  "Extreme Adventure","Family Attraction","Family Friendly Tours & Activities",
+  "Festivals","Fishing","Fishing Charters & Tours","Food Tours","Full Day Tours",
+  "Full-day Tours","Golf","Golf Tours & Tee Times","Half Day Tours","Half-day Tours",
+  "Helicopter Tour","Helicopter Tours","Hiking & Camping",
+  "Hiking, Camping & Trekking","Historic Tours","Historical",
+  "Historical & Heritage Tours","Historical Sites","Hop-on Hop-off Tours",
+  "Horse Riding","Hot Air Balloon","Hot Air Balloon Flights","Hot Air Ballooning",
+  "Hotel to Airport","Hotel to Hotel","Island Tour","Jet Boats & Speed Boats",
+  "Kayaking & Canoeing","Land Transfers","Literary, Art & Music Tours",
+  "Luxury Tours","Luxury Trains","Museum","Museum Tickets & Passes",
+  "Nature & Wildlife","Night Cruises","Night Tours","Nightlife","Observation deck",
+  "Off-Road Tours","Other Water Sports","Overnight Tours","Package Addon",
+  "Parasailing & Paragliding","Photography Tours","Port Transfers",
+  "Ports of Call Tours","Private & Custom Tours","Private Day Trips","Private Tours",
+  "Rail Tours","River Rafting","River Rafting & Tubing","Romantic Experiences",
+  "Romantic Tours","Running Tours","Safari","Safaris","Sailing",
+  "Sailing & Yachting","Scenic Flights","Scenic Train","Scuba & Snorkeling",
+  "Scuba & Snorkelling","Segway Tours","Self-Drive","Self-Drive Tours",
+  "Self-guided Tours & Rentals","Shopping","Shopping Tours",
+  "Show/Concert & Meal","Sightseeing & City Passes","Sightseeing Packages",
+  "Ski","Ski & Snow","Skip-the-Line Tours","Spa","Sport",
+  "Sporting Events & Packages","Sports Activities","Submarine","Submarine Tours",
+  "Sunrise/Sunset Tour","Surfing & Windsurfing","Swim with Dolphins",
+  "Theater, Shows & Musicals","Theme Park","Theme Park Tickets & Tours",
+  "Theme Parks","Thermal Spas & Hot Springs","Transfers","Transport",
+  "Trekking & Hiking","Walking Tours","Water Experiences","Water Parks",
+  "Water Sports","Water Transfers","Waterskiing & Jet skiing","Wedding Packages",
+  "Wellness","Wine Tasting","Wine Tasting & Winery Tours","Ziplines",
+  "Zoo Tickets & Passes",
+];
+
+// Unit Type values from Dictionary UnitType column.
+const UNIT_TYPE_VALUES = ["per_person", "per_unit"];
+
+// Time of day values from Dictionary TimeOfDay column.
+const TIME_OF_DAY_VALUES = ["MORNING", "AFTERNOON", "EVENING", "NIGHT", "ANYTIME"];
+
+// Suitable-for individual tokens from Dictionary Suitable for column.
+// The field value is tilde-separated, e.g. "ADULT~CHILD".
+const SUITABLE_FOR_TOKENS = ["ADULT", "CHILD", "GROUP", "INFANT", "SENIOR", "YOUTH"];
+
+// ---------------------------------------------------------------------------
 // JSON schema the model is constrained to (structured outputs).
+// ---------------------------------------------------------------------------
 const SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -44,87 +107,97 @@ const SCHEMA = {
           type: {
             type: "string",
             enum: TYPE_VALUES,
-            description: "Top-level CMS product type. Most sightseeing/tour products are ACTIVITY.",
+            description:
+              "Top-level CMS product type. Sightseeing/tour/experience products are ACTIVITY; " +
+              "airport/hotel/point transfers are TRANSFER; food-only are MEALS.",
           },
           subType: {
             type: "string",
-            enum: SUBTYPE_VALUES,
+            enum: SUBTYPE_ACTIVITY_VALUES,
             description:
-              "CMS sub-type. SIGHTSEEING for city/area tours; ATTRACTIONS when the focus is a specific named site/landmark/ticketed attraction.",
+              "CMS sub-type for ACTIVITY: SIGHTSEEING for guided area/city tours; " +
+              "ATTRACTIONS when the focus is a specific named site, landmark, or ticketed venue; " +
+              "TICKET_ONLY for entry tickets with no accompanying guide/transport.",
           },
           subCategory: {
             type: "string",
             enum: SUBCATEGORY_VALUES,
             description:
-              "CMS category, chosen by FORMAT/DURATION, not theme: 'City Tour' for a single-city sightseeing tour, 'Half Day Tours' for short (~half-day) outings, 'Sightseeing Packages' for full-day or multi-stop packages.",
+              "CMS sub-category. Pick by activity format/duration first: " +
+              "'City Tour' for a single-city guided sightseeing drive; " +
+              "'Half Day Tours' for outings under ~4 h; " +
+              "'Full Day Tours' / 'Full-day Tours' for full-day outings; " +
+              "'Airport Transfers' for airport ↔ city bus/limousine products; " +
+              "'Attraction Tickets' for entry-only tickets. " +
+              "Choose the closest from the enum — never invent a new value.",
           },
           shortDesc: {
             type: "string",
             description:
-              "One punchy marketing sentence (<= 120 chars) summarising the activity. No trailing period required.",
+              "One punchy marketing sentence (≤ 120 chars) capturing the core appeal. " +
+              "No trailing period required.",
           },
           isMealIncluded: {
             type: "string",
             enum: ["TRUE", "FALSE"],
             description:
-              "TRUE only if the inclusions mention food/meal/lunch/dinner/breakfast/refreshments; else FALSE.",
+              "TRUE only if the inclusions text explicitly mentions food, meal, lunch, " +
+              "dinner, breakfast, or refreshments; else FALSE.",
           },
           privateOrShared: {
             type: "string",
             enum: ["PRIVATE", "SHARED"],
             description:
-              "SHARED for SIC / join-in / group departures; PRIVATE for exclusive/private transfers.",
+              "SHARED for SIC / join-in / group/shared departures (look for 'SIC', " +
+              "'shared', 'group tour', 'join-in' in the name or description); " +
+              "PRIVATE for exclusive/private hire.",
           },
           timeOfDay: {
             type: "string",
-            enum: ["MORNING", "AFTERNOON", "EVENING", "FULL_DAY", "ANYTIME"],
-            description: "Best fit for the schedule; FULL_DAY if it spans morning to evening.",
+            enum: TIME_OF_DAY_VALUES,
+            description:
+              "Best fit for when the activity runs. Derive from schedule start time: " +
+              "before 12:00 → MORNING; 12:00–17:00 → AFTERNOON; 17:00–21:00 → EVENING; " +
+              "after 21:00 → NIGHT; no schedule or all-day → ANYTIME.",
           },
           suitableFor: {
             type: "string",
             description:
-              "Tilde-separated pax types in SCREAMING_SNAKE, e.g. 'ADULT~CHILD' or 'ADULT~CHILD~INFANT'.",
+              `Tilde-separated pax types from [${SUITABLE_FOR_TOKENS.join(", ")}]. ` +
+              "Use the vendor's Unit Type field and description: 'Adult & Child' → 'ADULT~CHILD'. " +
+              "Include INFANT/SENIOR/YOUTH only if explicitly mentioned.",
           },
           unitType: {
             type: "string",
             enum: UNIT_TYPE_VALUES,
             description:
-              "CMS pricing unit. per_person when priced per adult/child; per_group/per_vehicle for private exclusive bookings.",
+              "CMS pricing unit. per_person when priced individually (adult/child rates); " +
+              "per_unit for whole-vehicle/whole-group pricing.",
           },
           validDays: {
             type: "string",
             description:
-              "Days the activity runs: the full week minus any day listed in unavailableDays. " +
-              "Tilde-separated, full day names UPPERCASE, Monday-first order, e.g. " +
-              "'MONDAY~TUESDAY~WEDNESDAY~THURSDAY~FRIDAY~SATURDAY~SUNDAY'. If unavailableDays " +
-              "is empty/nil, return all seven. Used for both Valid Days Of Week and Run On Days.",
+              "Days the activity runs: all seven days minus any day listed in unavailableDays. " +
+              "Tilde-separated UPPERCASE full day names, Monday-first: " +
+              "'MONDAY~TUESDAY~WEDNESDAY~THURSDAY~FRIDAY~SATURDAY~SUNDAY'. " +
+              "If unavailableDays is empty/nil return all seven.",
           },
           isPickupIncluded: {
             type: "string",
             enum: ["TRUE", "FALSE"],
-            description:
-              "TRUE if pickupPoint is present / non-empty, else FALSE.",
+            description: "TRUE if pickupPoint is present and non-empty; else FALSE.",
           },
           isDropoffIncluded: {
             type: "string",
             enum: ["TRUE", "FALSE"],
             description:
-              "Whether dropoff is included. Default TRUE unless the activity data clearly indicates no dropoff.",
+              "Whether drop-off is included. Default TRUE unless the data clearly indicates no dropoff.",
           },
         },
         required: [
-          "type",
-          "subType",
-          "subCategory",
-          "shortDesc",
-          "isMealIncluded",
-          "privateOrShared",
-          "timeOfDay",
-          "suitableFor",
-          "unitType",
-          "validDays",
-          "isPickupIncluded",
-          "isDropoffIncluded",
+          "type","subType","subCategory","shortDesc","isMealIncluded",
+          "privateOrShared","timeOfDay","suitableFor","unitType",
+          "validDays","isPickupIncluded","isDropoffIncluded",
         ],
       },
     },
@@ -132,13 +205,21 @@ const SCHEMA = {
   required: ["activities"],
 };
 
-const SYSTEM = `You are a product-cataloguing assistant for MMT Holidays' CMS. You receive raw vendor tariff activities and classify each one into the CMS taxonomy and a few judgment fields. Base every decision strictly on the vendor data provided — do not invent details. Return one classification object per activity, in the same order as the input. Be consistent: identical activities must get identical classifications.
-
-Use ONLY these controlled vocabularies — pick the single closest fit, never invent a new value:
-- Type: ${TYPE_VALUES.join(" | ")}  (sightseeing/tour products are ACTIVITY)
-- Sub-Type: ${SUBTYPE_VALUES.join(" | ")}  (SIGHTSEEING = touring an area; ATTRACTIONS = focus on a named site/landmark/ticket)
-- Sub-Category: ${SUBCATEGORY_VALUES.join(" | ")}  (choose by FORMAT/DURATION — half-day vs full-day/multi-stop — NOT by theme)
-- Unit Type: ${UNIT_TYPE_VALUES.join(" | ")}`;
+const SYSTEM =
+  `You are a product-cataloguing assistant for MMT Holidays' CMS. ` +
+  `You receive raw vendor tariff activities and classify each one into the CMS taxonomy ` +
+  `and a few judgment fields. Base every decision strictly on the vendor data provided — ` +
+  `do not invent details. Return one classification object per activity, in the same order ` +
+  `as the input. Be consistent: identical activities must get identical classifications.\n\n` +
+  `Use ONLY the controlled vocabularies defined in the JSON schema — pick the single closest ` +
+  `fit, never invent a new value.\n\n` +
+  `Few-shot examples:\n` +
+  `1. "Kuala Lumpur City Tour (SIC)" — guided city tour, SIC/shared, 08:30-11:30/12:30-15:30, ` +
+  `   no meals, hotel pickup included → type:ACTIVITY, subType:SIGHTSEEING, subCategory:"City Tour", ` +
+  `   privateOrShared:SHARED, timeOfDay:MORNING, isPickupIncluded:TRUE\n` +
+  `2. "Airport Limousine Bus: Haneda Airport to/from Tokyo Area" — airport transfer bus, ` +
+  `   shared, no schedule → type:ACTIVITY, subType:ATTRACTIONS, subCategory:"Airport Transfers", ` +
+  `   privateOrShared:SHARED, timeOfDay:ANYTIME, isPickupIncluded:FALSE`;
 
 // Compact per-activity payload the model reasons over.
 function toActivityInput(row, i) {
