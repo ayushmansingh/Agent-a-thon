@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
-import { extract, computeFlags } from "./lib/extractor.js";
+import { extract, computeFlags, makeVendorGetter } from "./lib/extractor.js";
 import { classifyActivities, getEnvApiKey } from "./lib/llmExtractor.js";
 import {
   loadAllTemplates,
@@ -8,8 +8,9 @@ import {
   buildAoa,
   downloadSheet,
 } from "./lib/sheets.js";
-import { fieldsByCategory } from "./config/fieldConfig.js";
-import { lookupCityCode } from "./config/cityMaster.js";
+import { createMockProducts, createMockRateplans } from "./lib/mockCms.js";
+import { fieldsByCategory, normalizeHeader } from "./config/fieldConfig.js";
+import { lookupCityCodes } from "./config/cityMaster.js";
 
 // ---- helpers ----------------------------------------------------------------
 function vcOptions(meta) {
@@ -31,9 +32,53 @@ function defaultVendorConfig(sheetName) {
   return out;
 }
 
+const PRODUCT_DEFAULTED_PACKAGE_FIELDS = new Set([
+  "Visibility Bit",
+  "Channel",
+  "Seo Enabled",
+]);
+
+function defaultPackageInput(sheetName) {
+  const out = {};
+  for (const f of fieldsByCategory(sheetName).package_input) {
+    if (sheetName !== "Product" || !PRODUCT_DEFAULTED_PACKAGE_FIELDS.has(f.key)) {
+      continue;
+    }
+    const opts = vcOptions(f.meta);
+    out[f.key] = opts ? opts[0] : "";
+  }
+  return out;
+}
+
+function cityNameForRow(row) {
+  return makeVendorGetter(row || {})("destination Name");
+}
+
 const BAND_HINT = {
   vendor_config: "Set once per vendor — applies to every package.",
   package_input: "Differs per package — fill in for each activity below.",
+};
+
+const AI_CONFIDENCE_BY_SHEET = {
+  Product: {
+    [normalizeHeader("Type")]: "type",
+    [normalizeHeader("Sub-Type")]: "subType",
+    [normalizeHeader("Short Desc")]: "shortDesc",
+    [normalizeHeader("Sub-Category")]: "subCategory",
+  },
+  Rateplan: {
+    [normalizeHeader("Unit Type")]: "unitType",
+    [normalizeHeader("Valid Days Of Week")]: "validDays",
+    [normalizeHeader("Suitable for")]: "suitableFor",
+    [normalizeHeader("Is meal included")]: "isMealIncluded",
+    [normalizeHeader("Time of day")]: "timeOfDay",
+    [normalizeHeader("Is pickup included")]: "isPickupIncluded",
+    [normalizeHeader("Is dropoff included")]: "isDropoffIncluded",
+    [normalizeHeader("Private/ Shared")]: "privateOrShared",
+  },
+  Price: {
+    [normalizeHeader("Run On Days")]: "validDays",
+  },
 };
 
 // ---- small components -------------------------------------------------------
@@ -96,19 +141,22 @@ function PackageInputBand({ sheetName, rows, perRow, onChange }) {
           <div className="pkg-name">{label || `Package ${rowIdx + 1}`}</div>
           <div className="grid">
             {fields.map((f) => {
-              const isBool = String(f.meta?.[0]).toLowerCase() === "bool";
+              const opts = vcOptions(f.meta);
               const val = perRow[rowIdx]?.[f.key] ?? "";
               return (
                 <label className="field" key={f.key}>
                   <span className="field-label">{f.key}</span>
-                  {isBool ? (
+                  {opts ? (
                     <select
                       value={val}
                       onChange={(e) => onChange(rowIdx, f.key, e.target.value)}
                     >
                       <option value="">—</option>
-                      <option value="TRUE">TRUE</option>
-                      <option value="FALSE">FALSE</option>
+                      {opts.map((o) => (
+                        <option key={o} value={o}>
+                          {o}
+                        </option>
+                      ))}
                     </select>
                   ) : (
                     <input
@@ -127,7 +175,80 @@ function PackageInputBand({ sheetName, rows, perRow, onChange }) {
   );
 }
 
-function PreviewTable({ aoa }) {
+function CityLookupBand({ rows, labels, lookups, status, error, onRefresh }) {
+  if (!rows.length) return null;
+  const unresolved = lookups.filter(
+    (lookup) => lookup.status === "missing" || lookup.status === "error"
+  );
+  return (
+    <Band
+      title="City Code (Redash)"
+      hint="Fetched from a Redash hp_city query by city name; no manual entry required."
+    >
+      {status === "running" && (
+        <div className="banner info">Fetching city codes from Redash...</div>
+      )}
+      {status === "error" && (
+        <div className="banner warn">
+          {error || "Some city codes could not be resolved from Redash."}
+        </div>
+      )}
+      {unresolved.length > 0 && status !== "running" && (
+        <div className="banner warn">
+          {unresolved.length} city lookup{unresolved.length === 1 ? "" : "s"} need
+          attention in the Redash hp_city result.
+        </div>
+      )}
+      <div className="grid">
+        {rows.map((row, i) => {
+          const cityName = cityNameForRow(row);
+          const lookup = lookups[i] || {};
+          const value =
+            lookup.cityCode ||
+            (status === "running" ? "Resolving..." : "Not found");
+          return (
+            <div className="field" key={i}>
+              <span className="field-label">
+                {cityName || labels[i] || `Row ${i + 1}`}
+              </span>
+              <span
+                className={`readonly-value ${lookup.cityCode ? "" : "warn"}`}
+                title={lookup.error || ""}
+              >
+                {value}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="lookup-actions">
+        <button
+          className="secondary"
+          disabled={status === "running"}
+          onClick={onRefresh}
+        >
+          Refresh city codes
+        </button>
+      </div>
+    </Band>
+  );
+}
+
+function ConfidenceBar({ value }) {
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return null;
+  const pct = Math.max(0, Math.min(100, raw <= 1 ? raw * 100 : raw));
+  return (
+    <span className="confidence-wrap" title={`AI confidence ${Math.round(pct)}%`}>
+      <span className="confidence-track">
+        <span className="confidence-fill" style={{ width: `${pct}%` }} />
+      </span>
+      <span className="confidence-label">{Math.round(pct)}%</span>
+    </span>
+  );
+}
+
+function PreviewTable({ aoa, confidenceForCell, onCellChange }) {
   if (!aoa || aoa.length < 3) return null;
   const headers = aoa[0];
   const data = aoa.slice(2);
@@ -148,11 +269,27 @@ function PreviewTable({ aoa }) {
           <tbody>
             {data.map((row, r) => (
               <tr key={r}>
-                {row.map((c, i) => (
-                  <td key={i} title={String(c ?? "")}>
-                    {String(c ?? "")}
-                  </td>
-                ))}
+                {row.map((c, i) => {
+                  const confidence = confidenceForCell?.({
+                    header: headers[i],
+                    rowIndex: r,
+                    colIndex: i,
+                  });
+                  return (
+                    <td key={i} title={String(c ?? "")}>
+                      {onCellChange ? (
+                        <input
+                          className="preview-cell-input"
+                          value={String(c ?? "")}
+                          onChange={(e) => onCellChange(r, i, e.target.value)}
+                        />
+                      ) : (
+                        <span className="cell-value">{String(c ?? "")}</span>
+                      )}
+                      {confidence != null && <ConfidenceBar value={confidence} />}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -189,6 +326,7 @@ export default function App() {
   const [apiKey, setApiKey] = useState("");
   const [llmStatus, setLlmStatus] = useState("idle"); // idle|running|done|error|no-key
   const [llmError, setLlmError] = useState("");
+  const [aiClassifications, setAiClassifications] = useState([]);
 
   const [vendorConfig, setVendorConfig] = useState({});
   const [packageInputs, setPackageInputs] = useState({
@@ -196,12 +334,27 @@ export default function App() {
     Rateplan: [],
     Price: [],
   });
-  const [cityOverrides, setCityOverrides] = useState([]);
+  const [cellOverrides, setCellOverrides] = useState({
+    Product: {},
+    Rateplan: {},
+    Price: {},
+  });
+  const [cityLookups, setCityLookups] = useState([]);
+  const [cityLookupStatus, setCityLookupStatus] = useState("idle");
+  const [cityLookupError, setCityLookupError] = useState("");
 
   const [productDownloaded, setProductDownloaded] = useState(false);
   const [rateplanDownloaded, setRateplanDownloaded] = useState(false);
   const [productIds, setProductIds] = useState([]);
   const [rateplanIds, setRateplanIds] = useState([]);
+  const [mockCmsStatus, setMockCmsStatus] = useState({
+    Product: "idle",
+    Rateplan: "idle",
+  });
+  const [mockCmsError, setMockCmsError] = useState({
+    Product: "",
+    Rateplan: "",
+  });
 
   const [openSections, setOpenSections] = useState({
     Product: true,
@@ -220,12 +373,37 @@ export default function App() {
     [vendorRows]
   );
 
+  async function resolveCityCodes(rows) {
+    const cityNames = rows.map(cityNameForRow);
+    setCityLookupStatus("running");
+    setCityLookupError("");
+    setCityLookups(
+      cityNames.map((cityName) => ({
+        cityName,
+        cityCode: "",
+        status: cityName ? "pending" : "empty",
+      }))
+    );
+
+    const lookups = await lookupCityCodes(cityNames);
+    setCityLookups(lookups);
+
+    const failed = lookups.filter((lookup) => lookup.status === "error");
+    if (failed.length) {
+      setCityLookupStatus("error");
+      setCityLookupError(`${failed.length} city lookup request failed.`);
+      return;
+    }
+    setCityLookupStatus("done");
+  }
+
   async function onUpload(e) {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
     const rows = await parseVendorFile(file);
     setVendorRows(rows);
+    setAiClassifications([]);
     // Instant deterministic output (classification fields use stub defaults)…
     setExtracted(extract(rows));
     setFlags(computeFlags(rows));
@@ -236,13 +414,16 @@ export default function App() {
       Price: defaultVendorConfig("Price"),
     });
     setPackageInputs({
-      Product: rows.map(() => ({})),
-      Rateplan: rows.map(() => ({})),
-      Price: rows.map(() => ({})),
+      Product: rows.map(() => defaultPackageInput("Product")),
+      Rateplan: rows.map(() => defaultPackageInput("Rateplan")),
+      Price: rows.map(() => defaultPackageInput("Price")),
     });
-    setCityOverrides(rows.map((r) => lookupCityCode(r["destination Name"])));
+    setCellOverrides({ Product: {}, Rateplan: {}, Price: {} });
+    resolveCityCodes(rows);
     setProductIds(rows.map(() => ""));
     setRateplanIds(rows.map(() => ""));
+    setMockCmsStatus({ Product: "idle", Rateplan: "idle" });
+    setMockCmsError({ Product: "", Rateplan: "" });
     setProductDownloaded(false);
     setRateplanDownloaded(false);
 
@@ -265,6 +446,7 @@ export default function App() {
       return; // keep the deterministic output already on screen
     }
     setExtracted(extract(rows, classifications));
+    setAiClassifications(classifications);
     setLlmStatus("done");
   }
 
@@ -274,10 +456,17 @@ export default function App() {
     if (sheetName === "Product") {
       return base.map((row, i) => ({
         ...row,
-        "City Code": cityOverrides[i] || row["City Code"] || "",
+        "City Code": cityLookups[i]?.cityCode || row["City Code"] || "",
       }));
     }
     return base;
+  }
+
+  function confidenceForCell(sheetName, header, rowIndex) {
+    const field = AI_CONFIDENCE_BY_SHEET[sheetName]?.[normalizeHeader(header)];
+    if (!field) return null;
+    const value = aiClassifications[rowIndex]?.confidence?.[field];
+    return value == null ? null : value;
   }
 
   const idsByRow = useMemo(
@@ -301,37 +490,117 @@ export default function App() {
     });
   }
 
-  const productAoa = useMemo(
-    () => aoaFor("Product"),
-    [templates, extracted, vendorConfig, packageInputs, cityOverrides]
-  );
-  const rateplanAoa = useMemo(
-    () => aoaFor("Rateplan"),
-    [templates, extracted, vendorConfig, packageInputs, idsByRow]
-  );
-  const priceAoa = useMemo(
-    () => aoaFor("Price"),
-    [templates, extracted, vendorConfig, packageInputs, idsByRow]
-  );
+  function applyCellOverrides(sheetName, aoa) {
+    if (!aoa) return aoa;
+    const overrides = cellOverrides[sheetName] || {};
+    const entries = Object.entries(overrides);
+    if (!entries.length) return aoa;
+    const next = aoa.map((row) => [...row]);
+    entries.forEach(([key, value]) => {
+      const [rowIdx, colIdx] = key.split(":").map(Number);
+      const targetRow = rowIdx + 2;
+      if (next[targetRow] && Number.isInteger(colIdx)) {
+        next[targetRow][colIdx] = value;
+      }
+    });
+    return next;
+  }
 
-  function handleDownload(sheetName, aoa) {
+  const productAoa = applyCellOverrides("Product", aoaFor("Product"));
+  const rateplanAoa = applyCellOverrides("Rateplan", aoaFor("Rateplan"));
+  const priceAoa = applyCellOverrides("Price", aoaFor("Price"));
+
+  function setCellOverride(sheetName, rowIdx, colIdx, value) {
+    setCellOverrides((s) => ({
+      ...s,
+      [sheetName]: {
+        ...(s[sheetName] || {}),
+        [`${rowIdx}:${colIdx}`]: value,
+      },
+    }));
+  }
+
+  function applyMockIds(kind, idRows, key, setter) {
+    setter((current) => {
+      const next = [...current];
+      idRows.forEach((row) => {
+        if (row.rowIndex == null) return;
+        next[row.rowIndex] = row[key] || "";
+      });
+      return next;
+    });
+    setMockCmsStatus((s) => ({ ...s, [kind]: "done" }));
+    setMockCmsError((s) => ({ ...s, [kind]: "" }));
+  }
+
+  async function syncProductsToMockCms() {
+    setMockCmsStatus((s) => ({ ...s, Product: "running" }));
+    setMockCmsError((s) => ({ ...s, Product: "" }));
+    try {
+      const ids = await createMockProducts(
+        extractedFor("Product").map((row, i) => ({
+          rowIndex: i,
+          productName: row["Product name"] || packageLabels[i] || `Package ${i + 1}`,
+        }))
+      );
+      applyMockIds("Product", ids, "productId", setProductIds);
+    } catch (e) {
+      setMockCmsStatus((s) => ({ ...s, Product: "error" }));
+      setMockCmsError((s) => ({
+        ...s,
+        Product: e?.message || "Mock Product upload failed",
+      }));
+    }
+  }
+
+  async function syncRateplansToMockCms() {
+    setMockCmsStatus((s) => ({ ...s, Rateplan: "running" }));
+    setMockCmsError((s) => ({ ...s, Rateplan: "" }));
+    try {
+      const ids = await createMockRateplans(
+        extractedFor("Rateplan").map((row, i) => ({
+          rowIndex: i,
+          productId: productIds[i] || "",
+          rateplanName: row["Rateplan name"] || packageLabels[i] || `Package ${i + 1}`,
+        }))
+      );
+      applyMockIds("Rateplan", ids, "rateplanId", setRateplanIds);
+    } catch (e) {
+      setMockCmsStatus((s) => ({ ...s, Rateplan: "error" }));
+      setMockCmsError((s) => ({
+        ...s,
+        Rateplan: e?.message || "Mock Rateplan upload failed",
+      }));
+    }
+  }
+
+  async function handleDownload(sheetName, aoa) {
     downloadSheet({ sheetName, template: templates[sheetName], aoa });
     if (sheetName === "Product") {
       setProductDownloaded(true);
       setOpenSections((s) => ({ ...s, Rateplan: true }));
+      await syncProductsToMockCms();
     }
     if (sheetName === "Rateplan") {
       setRateplanDownloaded(true);
       setOpenSections((s) => ({ ...s, Price: true }));
+      await syncRateplansToMockCms();
     }
   }
 
+  const cityLookupRunning = cityLookupStatus === "running";
+  const productMockRunning = mockCmsStatus.Product === "running";
+  const rateplanMockRunning = mockCmsStatus.Rateplan === "running";
+  const canDownloadProduct =
+    Boolean(productAoa) && !cityLookupRunning && !productMockRunning;
   const productIdsComplete =
     vendorRows.length > 0 && productIds.every((id) => id && id.trim());
   const rateplanIdsComplete =
     vendorRows.length > 0 && rateplanIds.every((id) => id && id.trim());
-  const canDownloadRateplan = productDownloaded && productIdsComplete;
-  const canDownloadPrice = rateplanDownloaded && rateplanIdsComplete;
+  const canDownloadRateplan =
+    productDownloaded && productIdsComplete && !rateplanMockRunning;
+  const canDownloadPrice =
+    rateplanDownloaded && rateplanIdsComplete && !rateplanMockRunning;
 
   const rateplanFlags = flags.filter((f) => f.sheet === "Rateplan");
 
@@ -466,39 +735,15 @@ export default function App() {
               onChange={(k, v) => setVC("Product", k, v)}
             />
 
-            <Band
-              title="City Code (lookup)"
-              hint="Resolved from city_master. Edit manually if a city is missing."
-            >
-              <div className="grid">
-                {packageLabels.map((label, i) => {
-                  const resolved = lookupCityCode(
-                    vendorRows[i]?.["destination Name"]
-                  );
-                  return (
-                    <label className="field" key={i}>
-                      <span className="field-label">
-                        {vendorRows[i]?.["destination Name"] ||
-                          label ||
-                          `Row ${i + 1}`}
-                      </span>
-                      <input
-                        value={cityOverrides[i] ?? ""}
-                        placeholder={resolved ? "" : "not found — enter code"}
-                        className={!cityOverrides[i] ? "warn" : ""}
-                        onChange={(e) =>
-                          setCityOverrides((arr) => {
-                            const next = [...arr];
-                            next[i] = e.target.value;
-                            return next;
-                          })
-                        }
-                      />
-                    </label>
-                  );
-                })}
-              </div>
-            </Band>
+
+            <CityLookupBand
+              rows={vendorRows}
+              labels={packageLabels}
+              lookups={cityLookups}
+              status={cityLookupStatus}
+              error={cityLookupError}
+              onRefresh={() => resolveCityCodes(vendorRows)}
+            />
 
             <PackageInputBand
               sheetName="Product"
@@ -507,18 +752,39 @@ export default function App() {
               onChange={(r, k, v) => setPkg("Product", r, k, v)}
             />
 
-            <PreviewTable aoa={productAoa} />
+            <PreviewTable
+              aoa={productAoa}
+              confidenceForCell={({ header, rowIndex }) =>
+                confidenceForCell("Product", header, rowIndex)
+              }
+              onCellChange={(rowIdx, colIdx, value) =>
+                setCellOverride("Product", rowIdx, colIdx, value)
+              }
+            />
 
             <div className="actions">
               <button
                 className="primary"
+                disabled={!canDownloadProduct}
                 onClick={() => handleDownload("Product", productAoa)}
               >
                 ⬇ Download Product sheet
               </button>
+              {cityLookupRunning && (
+                <span className="hint-inline">Waiting for city-code lookup.</span>
+              )}
+              {productMockRunning && (
+                <span className="hint-inline">Mock CMS is generating Product IDs.</span>
+              )}
+              {mockCmsStatus.Product === "done" && (
+                <span className="done">Product IDs generated.</span>
+              )}
+              {mockCmsStatus.Product === "error" && (
+                <span className="hint-inline">{mockCmsError.Product}</span>
+              )}
               {productDownloaded && (
                 <span className="done">
-                  ✓ Downloaded. Upload to CMS, then paste Product IDs in stage 2.
+                  Downloaded. Mock CMS auto-fills Product IDs for stage 2.
                 </span>
               )}
             </div>
@@ -551,8 +817,8 @@ export default function App() {
             )}
 
             <Band
-              title="Product ID handoff"
-              hint="Paste the Product ID(s) the CMS returned. Injected into Rateplan rows."
+              title="Product IDs (mock CMS)"
+              hint="Auto-generated after Product download; edit any value before creating Rateplans."
             >
               <div className="grid">
                 {packageLabels.map((label, i) => (
@@ -562,7 +828,7 @@ export default function App() {
                     </span>
                     <input
                       value={productIds[i] ?? ""}
-                      placeholder="Product ID from CMS"
+                      placeholder="Auto-generated ACME code"
                       onChange={(e) =>
                         setProductIds((arr) => {
                           const next = [...arr];
@@ -588,7 +854,15 @@ export default function App() {
               onChange={(r, k, v) => setPkg("Rateplan", r, k, v)}
             />
 
-            <PreviewTable aoa={rateplanAoa} />
+            <PreviewTable
+              aoa={rateplanAoa}
+              confidenceForCell={({ header, rowIndex }) =>
+                confidenceForCell("Rateplan", header, rowIndex)
+              }
+              onCellChange={(rowIdx, colIdx, value) =>
+                setCellOverride("Rateplan", rowIdx, colIdx, value)
+              }
+            />
 
             <div className="actions">
               <button
@@ -603,13 +877,22 @@ export default function App() {
               )}
               {productDownloaded && !productIdsComplete && (
                 <span className="hint-inline">
-                  Enter a Product ID for every package to unlock.
+                  Waiting for Product IDs. You can also edit them manually.
                 </span>
               )}
               {rateplanDownloaded && (
                 <span className="done">
-                  ✓ Downloaded. Paste Rateplan IDs in stage 3.
+                  Downloaded. Mock CMS auto-fills Rateplan IDs for stage 3.
                 </span>
+              )}
+              {rateplanMockRunning && (
+                <span className="hint-inline">Mock CMS is generating Rateplan IDs.</span>
+              )}
+              {mockCmsStatus.Rateplan === "done" && (
+                <span className="done">Rateplan IDs generated.</span>
+              )}
+              {mockCmsStatus.Rateplan === "error" && (
+                <span className="hint-inline">{mockCmsError.Rateplan}</span>
               )}
             </div>
           </Section>
@@ -629,8 +912,8 @@ export default function App() {
             </div>
 
             <Band
-              title="Rateplan ID handoff"
-              hint="Paste the Rateplan ID(s) the CMS returned. Injected into Price rows."
+              title="Rateplan IDs (mock CMS)"
+              hint="Auto-generated after Rateplan download as RPYYYY_ACMEXXXX; edit before Price download."
             >
               <div className="grid">
                 {packageLabels.map((label, i) => (
@@ -640,7 +923,7 @@ export default function App() {
                     </span>
                     <input
                       value={rateplanIds[i] ?? ""}
-                      placeholder="Rateplan ID from CMS"
+                      placeholder="Auto-generated RPYYYY_ACMEXXXX"
                       onChange={(e) =>
                         setRateplanIds((arr) => {
                           const next = [...arr];
@@ -666,7 +949,15 @@ export default function App() {
               onChange={(r, k, v) => setPkg("Price", r, k, v)}
             />
 
-            <PreviewTable aoa={priceAoa} />
+            <PreviewTable
+              aoa={priceAoa}
+              confidenceForCell={({ header, rowIndex }) =>
+                confidenceForCell("Price", header, rowIndex)
+              }
+              onCellChange={(rowIdx, colIdx, value) =>
+                setCellOverride("Price", rowIdx, colIdx, value)
+              }
+            />
 
             <div className="actions">
               <button
@@ -681,7 +972,7 @@ export default function App() {
               )}
               {rateplanDownloaded && !rateplanIdsComplete && (
                 <span className="hint-inline">
-                  Enter a Rateplan ID for every package to unlock.
+                  Waiting for Rateplan IDs. You can also edit them manually.
                 </span>
               )}
             </div>

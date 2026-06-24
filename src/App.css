@@ -270,6 +270,22 @@ button.secondary:disabled {
 .field input.warn {
   border-color: var(--warn);
 }
+.readonly-value {
+  min-height: 34px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.readonly-value.warn {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.lookup-actions {
+  margin-top: 12px;
+}
 
 .pkg-card {
   border: 1px solid var(--border);
@@ -352,6 +368,56 @@ button.secondary:disabled {
   top: 0;
   color: var(--muted);
   font-weight: 600;
+}
+.cell-value {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.preview-cell-input {
+  width: 100%;
+  min-width: 80px;
+  max-width: 220px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  padding: 3px 4px;
+  outline: none;
+}
+.preview-cell-input:hover {
+  border-color: var(--border);
+  background: var(--bg);
+}
+.preview-cell-input:focus {
+  border-color: var(--accent);
+  background: var(--bg);
+}
+.confidence-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+}
+.confidence-track {
+  display: inline-block;
+  width: 44px;
+  height: 5px;
+  border-radius: 999px;
+  background: #2a3450;
+  overflow: hidden;
+}
+.confidence-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d84b4b, #d9a441, #59c178);
+}
+.confidence-label {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1;
 }
 
 /* actions */

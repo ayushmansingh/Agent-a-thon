@@ -62,7 +62,6 @@ function cellValue({
   switch (category) {
     case "system_id": {
       // meta tells stage; we always inject whatever id is available.
-      const arr = (entry.meta || [])[0];
       if (key === "Rateplan ID") return ids?.rateplan ?? "";
       // both "Product ID" columns + stageB
       return ids?.product ?? "";

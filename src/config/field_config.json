@@ -55,11 +55,11 @@
       "Holidays"
     ],
     "Visibility Bit": [
-      "vendor_config",
+      "package_input",
       "enum: Holidays|FD"
     ],
     "Channel": [
-      "vendor_config",
+      "package_input",
       "enum: Assist|Online|Both"
     ],
     "Is Highlighted": [
@@ -103,7 +103,7 @@
       "free text, varies per package"
     ],
     "Seo Enabled": [
-      "vendor_config",
+      "package_input",
       "bool"
     ],
     "Market Brand": [
@@ -138,7 +138,7 @@
     ],
     "City Code": [
       "lookup",
-      "city_master (destination Name -> code)"
+      "Redash hp_city result (destination Name -> city_code)"
     ],
     "Lat": [
       "blank"

@@ -91,6 +91,34 @@ const TIME_OF_DAY_VALUES = ["MORNING", "AFTERNOON", "EVENING", "NIGHT", "ANYTIME
 // The field value is tilde-separated, e.g. "ADULT~CHILD".
 const SUITABLE_FOR_TOKENS = ["ADULT", "CHILD", "GROUP", "INFANT", "SENIOR", "YOUTH"];
 
+const CLASSIFICATION_KEYS = [
+  "type",
+  "subType",
+  "subCategory",
+  "shortDesc",
+  "isMealIncluded",
+  "privateOrShared",
+  "timeOfDay",
+  "suitableFor",
+  "unitType",
+  "validDays",
+  "isPickupIncluded",
+  "isDropoffIncluded",
+];
+
+const CONFIDENCE_PROPERTIES = Object.fromEntries(
+  CLASSIFICATION_KEYS.map((key) => [
+    key,
+    {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+      description:
+        "Confidence for this field from 0.0 to 1.0. Use lower values when vendor data is missing, ambiguous, or inferred indirectly.",
+    },
+  ])
+);
+
 // ---------------------------------------------------------------------------
 // JSON schema the model is constrained to (structured outputs).
 // ---------------------------------------------------------------------------
@@ -193,11 +221,19 @@ const SCHEMA = {
             description:
               "Whether drop-off is included. Default TRUE unless the data clearly indicates no dropoff.",
           },
+          confidence: {
+            type: "object",
+            additionalProperties: false,
+            properties: CONFIDENCE_PROPERTIES,
+            required: CLASSIFICATION_KEYS,
+            description:
+              "Per-field confidence values for every AI-filled field. Values must be numbers from 0.0 to 1.0.",
+          },
         },
         required: [
           "type","subType","subCategory","shortDesc","isMealIncluded",
           "privateOrShared","timeOfDay","suitableFor","unitType",
-          "validDays","isPickupIncluded","isDropoffIncluded",
+          "validDays","isPickupIncluded","isDropoffIncluded","confidence",
         ],
       },
     },
@@ -266,7 +302,8 @@ export async function classifyActivities(vendorRows, opts = {}) {
           role: "user",
           content:
             `Classify these ${activities.length} vendor activities. ` +
-            `Return exactly ${activities.length} objects in the same order.\n\n` +
+            `Return exactly ${activities.length} objects in the same order. ` +
+            `For every AI-filled field, include a 0.0-1.0 confidence score in the confidence object.\n\n` +
             JSON.stringify(activities, null, 2),
         },
       ],

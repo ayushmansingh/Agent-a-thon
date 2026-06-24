@@ -5,15 +5,19 @@ Holidays CMS upload sheets — **Product**, **Rateplan**, **Price** — auto-fil
 what it can, letting a PM tweak a small set of business fields, and downloading
 the sheets in the strict order the CMS requires.
 
-No backend. React + Vite + [SheetJS](https://sheetjs.com) (`xlsx`). Parsing and
-Excel generation happen entirely in the browser, so it deploys later as a static
-site (Vercel).
+React + Vite + [SheetJS](https://sheetjs.com) (`xlsx`). Parsing and Excel
+generation happen in the browser. City Code is fetched from the Redash source
+link for query `162593`, with `p_city_name` set per product row.
+The app calls Redash API `refresh`, polls the job, then reads the query result.
+In local dev, Vite proxies `/redash-api` to Redash to avoid browser CORS.
+The mock CMS handoff is implemented as local Vite dev middleware under `/mock-cms`.
 
 ## Run
 
 ```bash
 npm install
 cp .env.example .env.local   # then paste your Anthropic key (see "AI extraction")
+# set VITE_REDASH_CITY_LOOKUP_URL and REDASH_KEY for the hp_city Redash lookup
 npm run dev      # http://localhost:5173
 npm run build    # static build into dist/
 ```
@@ -31,6 +35,8 @@ site — no backend). Provide a key one of two ways:
 On upload the app shows the deterministic output instantly, then one batched
 Claude call classifies every activity and the fields update in place. With **no
 key**, it falls back to the deterministic stub defaults — nothing breaks.
+Claude also returns a 0.0-1.0 confidence score per AI-filled field. Preview
+cells for those fields show a compact red-to-green confidence bar.
 
 > ⚠️ Because the call is browser-direct (`dangerouslyAllowBrowser`), the key is
 > visible to anyone using the page. Fine for a local demo with your own key —
@@ -41,20 +47,24 @@ key**, it falls back to the deterministic stub defaults — nothing breaks.
 The three stages are gated so the CMS load-order dependency is enforced by the
 UI, not left to the user:
 
-1. **Product** — upload vendor tariff → sheets auto-fill in memory → download
-   the Product sheet. (Rateplan & Price are locked.)
-2. **Rateplan** — upload Product sheet to the CMS *outside this app*, paste the
-   returned **Product ID(s)** back in. The app injects them into the Rateplan
-   rows and unlocks the Rateplan download.
-3. **Price** — paste the returned **Rateplan ID(s)** → injected into Price rows
-   → download Price.
+1. **Product** - upload vendor tariff -> sheets auto-fill in memory -> download
+   the Product sheet. The mock CMS returns Product IDs like `ACME000001`.
+2. **Rateplan** - Product IDs are injected automatically. Download the Rateplan
+   sheet; the mock CMS returns Rateplan IDs like `RP0001_ACME000001`.
+3. **Price** - Rateplan IDs are injected automatically -> download Price.
+
+The auto-generated Product and Rateplan IDs remain editable before the next
+stage, so a user can override mock values when needed.
+Generated preview cells are also editable; edits there are applied to the
+downloaded workbook for that sheet.
 
 Each section has two editable bands:
 
 - **Vendor defaults** (`vendor_config`) — set once per vendor, applied to every
-  package (e.g. Visibility Bit, Channel, dynamic-inventory toggles).
+  package (e.g. dynamic-inventory toggles).
 - **Per-package** (`package_input`) — differs per activity (Rank, Highlighted,
-  Salience, hotel link, Labels, validity dates, image link…).
+  Visibility Bit, Channel, SEO, Salience, hotel link, Labels, validity dates,
+  image link...).
 
 ## The extractor — two layers, merged per row
 
@@ -93,8 +103,8 @@ truth — every target column is tagged with a category:
 | `default` | fixed business fallback (e.g. Affiliate `Holidays`, Star Rating `5`) |
 | `vendor_config` | "Vendor defaults" band |
 | `package_input` | "Per-package" band |
-| `lookup` | City Code via the `city_master` stub (`src/config/cityMaster.js`) |
-| `system_id` | injected from pasted Product/Rateplan IDs |
+| `lookup` | City Code via Redash query `162593` source (`p_city_name` -> `city_code`) |
+| `system_id` | injected from editable mock CMS Product/Rateplan IDs |
 | `blank` | shipped empty (business-confirmed) |
 | `ship_sample` | the ~55 untraced Rateplan columns — copied **verbatim** from the sample row until the trace is completed |
 

@@ -33,7 +33,6 @@ import {
   firstSentence,
   timeOfDay,
 } from "./transforms.js";
-import { lookupCityCode } from "../config/cityMaster.js";
 
 // Resolve a vendor cell by header name (exact, else normalized contains).
 export function makeVendorGetter(row) {
@@ -73,7 +72,7 @@ function deriveProduct(row, cls = {}) {
     TnC: passthrough(g("**Terms & Conditions")),
     "Activity Highlights": bulletToTilde(g("Why should I do this ?")),
     "Sub-Category": pick(cls.subCategory, "City Tour"), // LLM class (stub: City Tour)
-    "City Code": lookupCityCode(g("destination Name")), // lookup
+    "City Code": "", // populated by async Redash hp_city lookup in App.jsx
   };
 }
 
